@@ -10,4 +10,5 @@ edition = "2018"
 serde_json = "1.0.48"
 uuid = { version = "0.8.1", features = ["v4"] }
 futures = "0.3.4"
+async-trait = "0.1.24"
 tokio = { version = "0.2.13", features = ["fs", "time", "io-util", "sync", "rt-threaded", "macros"] }

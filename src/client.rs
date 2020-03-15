@@ -6,18 +6,25 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use tokio::io::{AsyncRead, AsyncWrite};
 use super::connection::{Connection, IpcConnection};
 use crate::message::*;
 use crate::{Result, Error};
 
-/// Represents an RPC client with the given connection.
-pub struct Client<C: Connection = IpcConnection> {
-    writer: C::WriteHalf,
+impl Drop for Client {
+    fn drop(&mut self) {
+        println!("Drop");
+    }
+}
+
+/// Represents an RPC client with a `Connection`.
+pub struct Client {
+    writer: Box<dyn AsyncWrite + Unpin>,
     messages: Arc<Mutex<HashMap<String, Message>>>,
     reader_thread: JoinHandle<()>,
 }
 
-impl <C: Connection> Client<C> {
+impl Client {
     /// Creates a new `Client` from a connection. For most use-cases, please use
     /// `connect` instead.
     pub fn new(connection: C) -> Self {
