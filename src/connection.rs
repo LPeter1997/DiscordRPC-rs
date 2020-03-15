@@ -10,9 +10,9 @@ use crate::Result;
 #[async_trait]
 pub trait Connection: Sized {
     /// The type that the connection exposes for reading.
-    type ReadHalf: AsyncRead;
+    type ReadHalf: AsyncRead + 'static;
     /// The type that the connection exposes for writing.
-    type WriteHalf: AsyncWrite;
+    type WriteHalf: AsyncWrite + 'static;
 
     /// Tries to build a connection to the `index`th Dicrord RPC server. An
     /// optional timeout can be given.

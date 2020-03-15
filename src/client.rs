@@ -1,6 +1,6 @@
 //! The RPC client based on a `Connection`.
 
-use std::time;
+use std::time::Duration;
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::pin::Pin;
@@ -11,6 +11,8 @@ use super::connection::{Connection, IpcConnection};
 use crate::message::*;
 use crate::{Result, Error};
 
+type Shared<T> = Arc<Mutex<T>>;
+
 impl Drop for Client {
     fn drop(&mut self) {
         println!("Drop");
@@ -19,13 +21,42 @@ impl Drop for Client {
 
 /// Represents an RPC client with a `Connection`.
 pub struct Client {
-    writer: Box<dyn AsyncWrite + Unpin>,
-    messages: Arc<Mutex<HashMap<String, Message>>>,
-    reader_thread: JoinHandle<()>,
+    reader: Box<dyn AsyncRead>,
+    writer: Box<dyn AsyncWrite>,
+    messages: Shared<HashMap<String, Message>>,
 }
 
 impl Client {
-    /// Creates a new `Client` from a connection. For most use-cases, please use
+    /// Creates a new `Client` from the given `Connection`.
+    pub async fn from_connection(connection: impl Connection) -> Self {
+        let (reader, writer) = connection.split();
+        let (reader, writer) = (Box::new(reader), Box::new(writer));
+
+        let messages = Arc::new(Mutex::new(HashMap::new()));
+
+        Self{ reader, writer, messages }
+    }
+
+    /// Tries to build a `Connection` for all the possible Discord servers and
+    /// create a client from it. An optional timeout can be given for each
+    /// trial.
+    pub async fn build_connection<C: Connection>(timeout: Option<Duration>) -> Result<Self> {
+        for i in 0..10 {
+            if let Ok(c) = C::connect(i, timeout).await {
+                return Ok(Self::from_connection(c).await);
+            }
+        }
+        Err(Error::DiscordNotRunning)
+    }
+
+    /// Tries to build an `IpcConnection` with `build_connection`.
+    pub async fn build_ipc_connection(timeout: Option<Duration>) -> Result<Self> {
+        Self::build_connection::<IpcConnection>(timeout).await
+    }
+}
+
+impl Client {
+    /*/// Creates a new `Client` from a connection. For most use-cases, please use
     /// `connect` instead.
     pub fn new(connection: C) -> Self {
         let (reader, writer) = connection.split();
@@ -64,22 +95,22 @@ impl Client {
             }
         }
         Err(Error::DiscordNotRunning)
-    }
+    }*/
 
     // TODO
-    pub fn close(self) {
+    /*pub fn close(self) {
         unimplemented!();
-    }
+    }*/
 
     // TODO: Return token, document
-    pub async fn authorize(&mut self) -> Result<Message> {
+    /*pub async fn authorize(&mut self) -> Result<Message> {
         self.request(MessageType::Handshake, serde_json::json!{{
             "client_id": "192741864418312192",
             "v": 1
         }}).await
-    }
+    }*/
 
-    // TODO: Response await, document
+    /*// TODO: Response await, document
     async fn request(&mut self, msg_ty: MessageType, mut json: serde_json::Value) -> Result<Message> {
         // Slap on an identifier, we expect this same identifier on the result
         let nonce = nonce();
@@ -97,7 +128,7 @@ impl Client {
             }
             tokio::task::yield_now().await;
         }
-    }
+    }*/
 }
 
 /// Returns the current processes ID.

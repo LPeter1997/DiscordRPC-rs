@@ -1,12 +1,11 @@
 //! Messages that can be sent through connections.
 
 use std::convert::{TryFrom, TryInto};
-use std::pin::Pin;
 use std::marker::Unpin;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::{Result, Error};
 
-/// The different message types
+/// The different message types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MessageType {
     Handshake,
@@ -43,6 +42,7 @@ impl TryFrom<u32> for MessageType {
     }
 }
 
+/// Represents a message with a given `MessageType` and JSON payload.
 #[derive(Debug, Clone)]
 pub struct Message {
     msg_type: MessageType,
@@ -60,10 +60,8 @@ impl Message {
         self.payload["nonce"].as_str()
     }
 
-    /// Encodes this `Message` to the given `Writer`.
-    pub async fn encode_to<W>(&self, mut writer: Pin<W>) -> Result<()>
-        where Pin<W>: AsyncWriteExt, W: Unpin {
-
+    /// Tries to encode this `Message` to the given writer.
+    pub async fn encode_to<W>(&self, mut writer: impl AsyncWriteExt + Unpin) -> Result<()> {
         let ty: u32 = self.msg_type.into();
         writer.write(&ty.to_le_bytes()).await?;
         let payload = self.payload.to_string();
@@ -74,15 +72,11 @@ impl Message {
         Ok(())
     }
 
-    /// Tries to decode a `Message` from the given `Reader`.
-    pub async fn decode_from<R>(mut reader: Pin<R>) -> Result<Self>
-        where Pin<R>: AsyncReadExt, R: Unpin {
-
+    /// Tries to decode a `Message` from the given reader.
+    pub async fn decode_from<R>(mut reader: impl AsyncReadExt + Unpin) -> Result<Self> {
         let mut ty = [0u8; 4];
         let mut len = [0u8; 4];
-        println!("X");
         reader.read_exact(&mut ty).await?;
-        println!("Y");
         let ty = u32::from_le_bytes(ty);
         let ty: MessageType = ty.try_into()?;
         reader.read_exact(&mut len).await?;

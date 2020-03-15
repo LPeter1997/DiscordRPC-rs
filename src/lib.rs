@@ -6,7 +6,7 @@ pub use error::*;
 mod connection;
 pub use connection::*;
 
-//mod message;
-//pub mod client;
+mod message;
 
-//pub use client::Client;
+pub mod client;
+pub use client::*;
