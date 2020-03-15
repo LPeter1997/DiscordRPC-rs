@@ -62,12 +62,17 @@ impl Message {
 
     /// Tries to encode this `Message` to the given writer.
     pub async fn encode_to(&self, mut writer: impl AsyncWriteExt + Unpin) -> Result<()> {
-        let ty: u32 = self.msg_type.into();
-        writer.write(&ty.to_le_bytes()).await?;
         let payload = self.payload.to_string();
+        let mut buffer = Vec::with_capacity(8 + payload.len());
+
+        let ty: u32 = self.msg_type.into();
         let payload_len = payload.len() as u32;
-        writer.write(&payload_len.to_le_bytes()).await?;
-        writer.write(payload.as_bytes()).await?;
+        buffer.extend_from_slice(&ty.to_le_bytes());
+        buffer.extend_from_slice(&payload_len.to_le_bytes());
+        buffer.extend_from_slice(payload.as_bytes());
+
+        writer.write(&buffer).await?;
+
         writer.flush().await?;
         Ok(())
     }

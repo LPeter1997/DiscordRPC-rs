@@ -39,11 +39,11 @@ impl Client {
         task::spawn(async move {
             let mut reader = Pin::new(&mut reader);
             loop {
-                println!("X");
+                println!("Read X");
                 if let Ok(msg) = Message::decode_from(&mut reader).await {
-                    println!("Y");
+                    println!("Read Y");
                     if let Some(nonce) = msg.nonce() {
-                        println!("Z");
+                        println!("Read Z");
                         ms.lock().await.insert(nonce.to_string(), msg);
                     }
                     else {
@@ -98,9 +98,12 @@ impl Client {
             // TODO: This could be improved with semaphores
             // When a read happens, notify all threads
             loop {
+                println!("Before find");
                 if let Some(msg) = messages.lock().await.remove(&nonce) {
+                    println!("Found");
                     return Ok(msg);
                 }
+                println!("Did not find");
                 task::yield_now().await;
             }
         });
