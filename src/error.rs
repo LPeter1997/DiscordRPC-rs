@@ -22,6 +22,8 @@ pub enum Error {
     MessageTypeError(u32),
     /// Could not connect to any Discord server on this machine.
     DiscordNotRunning,
+    /// The connection was closed.
+    ConnectionClosed,
 }
 
 impl From<std::io::Error> for Error {

@@ -1,6 +1,7 @@
 //! Defines the connection types for the RCP client to use.
 
 use std::marker::Unpin;
+use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::time::Duration;
@@ -30,21 +31,63 @@ pub type IpcConnection = windows::IpcConnection;
 #[cfg(target_os = "windows")]
 mod windows {
     use super::*;
+    use std::io;
+    use std::ops::DerefMut;
+    use std::pin::Pin;
+    use std::task::{Poll, Context};
     use tokio::fs::{File, OpenOptions};
     use tokio::time;
 
-    /// IPC connection on Windows.
-    pub struct IpcConnection {
-        read: File,
-        write: File,
+    /// A wrapper for a `tokio::fs::File` that can be read and written
+    /// asynchronously on multiple threads.
+    #[derive(Debug, Clone)]
+    pub struct AsyncFile(Arc<Mutex<File>>);
+
+    impl AsyncRead for AsyncFile {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            cx: &mut Context,
+            buf: &mut [u8]
+        ) -> Poll<io::Result<usize>> {
+            Pin::new(self.0.lock().unwrap().deref_mut()).poll_read(cx, buf)
+        }
     }
 
-    /// Helper function to asynchronously open a file for reading or writing
-    /// with a given timeout.
-    async fn open_file(address: &str, r: bool, w: bool, timeout: Option<Duration>) -> Result<File> {
+    impl AsyncWrite for AsyncFile {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            cx: &mut Context,
+            buf: &[u8]
+        ) -> Poll<io::Result<usize>> {
+            Pin::new(self.0.lock().unwrap().deref_mut()).poll_write(cx, buf)
+        }
+
+        fn poll_flush(
+            self: Pin<&mut Self>,
+            cx: &mut Context
+        ) -> Poll<io::Result<()>> {
+            Pin::new(self.0.lock().unwrap().deref_mut()).poll_flush(cx)
+        }
+
+        fn poll_shutdown(
+            self: Pin<&mut Self>,
+            cx: &mut Context
+        ) -> Poll<io::Result<()>> {
+            Pin::new(self.0.lock().unwrap().deref_mut()).poll_shutdown(cx)
+        }
+    }
+
+    /// IPC connection on Windows.
+    pub struct IpcConnection(File);
+
+    /// Helper function to asynchronously open a file for reading and writing
+    /// with a given optional timeout.
+    async fn open_file(address: &str, timeout: Option<Duration>) -> Result<File> {
         let mut opts = OpenOptions::new();
-        opts.read(r).write(w);
-        let fut = opts.open(&address);
+        let fut = opts
+            .read(true)
+            .write(true)
+            .open(&address);
         if let Some(timeout) = timeout {
             let file = time::timeout(timeout, fut);
             let file = file.await??;
@@ -58,18 +101,18 @@ mod windows {
 
     #[async_trait]
     impl Connection for IpcConnection {
-        type ReadHalf = File;
-        type WriteHalf = File;
+        type ReadHalf = AsyncFile;
+        type WriteHalf = AsyncFile;
 
         async fn connect(index: usize, timeout: Option<Duration>) -> Result<Self> {
             let address = format!(r#"\\.\pipe\discord-ipc-{}"#, index);
-            let read = open_file(&address, true, false, timeout).await?;
-            let write = open_file(&address, false, true, timeout).await?;
-            Ok(Self{ read, write })
+            let file = open_file(&address, timeout).await?;
+            Ok(Self(file))
         }
 
         fn split(self) -> (Self::ReadHalf, Self::WriteHalf) {
-            (self.read, self.write)
+            let file = AsyncFile(Arc::new(Mutex::new(self.0)));
+            (file.clone(), file)
         }
     }
 }

@@ -1,18 +1,14 @@
 //! The RPC client based on a `Connection`.
 
 use std::time::Duration;
-use std::sync::Arc;
-use std::collections::HashMap;
 use std::pin::Pin;
-use tokio::sync::Mutex;
 use tokio::task;
 use tokio::time;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::AsyncWrite;
+use tokio::sync::watch;
 use super::connection::{Connection, IpcConnection};
 use crate::message::*;
 use crate::{Result, Error};
-
-type Shared<T> = Arc<Mutex<T>>;
 
 impl Drop for Client {
     fn drop(&mut self) {
@@ -23,7 +19,7 @@ impl Drop for Client {
 /// Represents an RPC client with a `Connection`.
 pub struct Client {
     writer: Box<dyn AsyncWrite + Unpin>,
-    messages: Shared<HashMap<String, Message>>,
+    rx: watch::Receiver<std::result::Result<Message, ()>>,
 }
 
 impl Client {
@@ -31,24 +27,14 @@ impl Client {
     pub async fn from_connection(connection: impl Connection) -> Result<Self> {
         let (mut reader, writer) = connection.split();
         let writer = Box::new(writer);
+        let (tx, rx) = watch::channel(Err(()));
 
-        let messages = Arc::new(Mutex::new(HashMap::new()));
-
-        let ms = messages.clone();
-        // TODO: A way to stop this?
+        // TODO: A way to stop this
         task::spawn(async move {
             let mut reader = Pin::new(&mut reader);
             loop {
-                println!("Read X");
                 if let Ok(msg) = Message::decode_from(&mut reader).await {
-                    println!("Read Y");
-                    if let Some(nonce) = msg.nonce() {
-                        println!("Read Z");
-                        ms.lock().await.insert(nonce.to_string(), msg);
-                    }
-                    else {
-                        // TODO: What to do with messages without `"nonce"`?
-                    }
+                    tx.broadcast(Ok(msg));
                 }
                 else {
                     // TODO: What to do with bad messages?
@@ -57,7 +43,7 @@ impl Client {
             }
         });
 
-        Ok(Self{ writer, messages })
+        Ok(Self{ writer, rx })
     }
 
     /// Tries to build a `Connection` for all the possible Discord servers and
@@ -79,33 +65,33 @@ impl Client {
         Self::build_connection::<IpcConnection>(timeout).await
     }
 
-    /// Sends a request that awaits for a message response. An optional timeout
-    /// can be given.
-    pub async fn request(&mut self, msg_ty: MessageType, mut json: serde_json::Value,
-        timeout: Option<Duration>) -> Result<Message> {
+    /// Sends a request that awaits for a message response. An optional
+    /// completion token and timeout can be given. If there's no completion
+    /// token given, then the response is expected to have no `"nonce"`.
+    async fn request_internal(&mut self, msg_ty: MessageType, mut json: serde_json::Value,
+        nonce: Option<String>, timeout: Option<Duration>) -> Result<Message> {
 
-        // Slap on an identifier, we expect this same identifier on the result
-        let nonce = nonce();
-        json["nonce"] = serde_json::Value::String(nonce.clone());
+        if let Some(nonce) = nonce.as_ref() {
+            // Slap on an identifier, we expect this same identifier on the result
+            json["nonce"] = serde_json::Value::String(nonce.clone());
+        }
         let msg = Message::new(msg_ty, json);
         // Write it
         let writer = Pin::new(&mut self.writer);
         msg.encode_to(writer).await?;
 
         // We loop to wait for a response
-        let messages = self.messages.clone();
+        let mut rx = self.rx.clone();
         let join = task::spawn(async move {
-            // TODO: This could be improved with semaphores
-            // When a read happens, notify all threads
-            loop {
-                println!("Before find");
-                if let Some(msg) = messages.lock().await.remove(&nonce) {
-                    println!("Found");
-                    return Ok(msg);
+            let nonce = nonce.as_ref().map(|n| n.as_str());
+            while let Some(msg) = rx.recv().await {
+                if let Ok(msg) = msg {
+                    if msg.nonce() == nonce {
+                        return Ok(msg);
+                    }
                 }
-                println!("Did not find");
-                task::yield_now().await;
             }
+            return Err(Error::ConnectionClosed);
         });
 
         // Wrap it into a timeout if needed
@@ -121,10 +107,10 @@ impl Client {
     // TODO: Client ID
     /// Sends an authorization request. An optional timeout can be given.
     pub async fn authorize(&mut self, timeout: Option<Duration>) -> Result<Message> {
-        self.request(MessageType::Handshake, serde_json::json!{{
-            "client_id": "192741864418312192",
+        self.request_internal(MessageType::Handshake, serde_json::json!{{
+            "client_id": "292341863318585192",
             "v": 1
-        }}, timeout).await
+        }}, None, timeout).await
     }
 }
 
