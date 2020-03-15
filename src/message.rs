@@ -61,7 +61,7 @@ impl Message {
     }
 
     /// Tries to encode this `Message` to the given writer.
-    pub async fn encode_to<W>(&self, mut writer: impl AsyncWriteExt + Unpin) -> Result<()> {
+    pub async fn encode_to(&self, mut writer: impl AsyncWriteExt + Unpin) -> Result<()> {
         let ty: u32 = self.msg_type.into();
         writer.write(&ty.to_le_bytes()).await?;
         let payload = self.payload.to_string();
@@ -73,7 +73,7 @@ impl Message {
     }
 
     /// Tries to decode a `Message` from the given reader.
-    pub async fn decode_from<R>(mut reader: impl AsyncReadExt + Unpin) -> Result<Self> {
+    pub async fn decode_from(mut reader: impl AsyncReadExt + Unpin) -> Result<Self> {
         let mut ty = [0u8; 4];
         let mut len = [0u8; 4];
         reader.read_exact(&mut ty).await?;

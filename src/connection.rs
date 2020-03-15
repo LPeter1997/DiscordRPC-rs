@@ -1,5 +1,6 @@
 //! Defines the connection types for the RCP client to use.
 
+use std::marker::Unpin;
 use async_trait::async_trait;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::time::Duration;
@@ -10,9 +11,9 @@ use crate::Result;
 #[async_trait]
 pub trait Connection: Sized {
     /// The type that the connection exposes for reading.
-    type ReadHalf: AsyncRead + 'static;
+    type ReadHalf: AsyncRead + Unpin + 'static;
     /// The type that the connection exposes for writing.
-    type WriteHalf: AsyncWrite + 'static;
+    type WriteHalf: AsyncWrite + Unpin + 'static;
 
     /// Tries to build a connection to the `index`th Dicrord RPC server. An
     /// optional timeout can be given.
@@ -30,6 +31,7 @@ pub type IpcConnection = windows::IpcConnection;
 mod windows {
     use super::*;
     use tokio::fs::{File, OpenOptions};
+    use tokio::time;
 
     /// IPC connection on Windows.
     pub struct IpcConnection {
@@ -44,7 +46,7 @@ mod windows {
         opts.read(r).write(w);
         let fut = opts.open(&address);
         if let Some(timeout) = timeout {
-            let file = tokio::time::timeout(timeout, fut);
+            let file = time::timeout(timeout, fut);
             let file = file.await??;
             Ok(file)
         }

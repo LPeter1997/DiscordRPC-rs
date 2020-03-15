@@ -1,5 +1,7 @@
 //! TODO: Introduce
 
+#![feature(async_closure)]
+
 mod error;
 pub use error::*;
 

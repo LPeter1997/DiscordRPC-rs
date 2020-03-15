@@ -5,7 +5,8 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use std::pin::Pin;
 use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
+use tokio::task;
+use tokio::time;
 use tokio::io::{AsyncRead, AsyncWrite};
 use super::connection::{Connection, IpcConnection};
 use crate::message::*;
@@ -21,8 +22,7 @@ impl Drop for Client {
 
 /// Represents an RPC client with a `Connection`.
 pub struct Client {
-    reader: Box<dyn AsyncRead>,
-    writer: Box<dyn AsyncWrite>,
+    writer: Box<dyn AsyncWrite + Unpin>,
     messages: Shared<HashMap<String, Message>>,
 }
 
@@ -30,11 +30,11 @@ impl Client {
     /// Creates a new `Client` from the given `Connection`.
     pub async fn from_connection(connection: impl Connection) -> Self {
         let (reader, writer) = connection.split();
-        let (reader, writer) = (Box::new(reader), Box::new(writer));
+        let writer = Box::new(writer);
 
         let messages = Arc::new(Mutex::new(HashMap::new()));
 
-        Self{ reader, writer, messages }
+        Self{ writer, messages }
     }
 
     /// Tries to build a `Connection` for all the possible Discord servers and
@@ -52,6 +52,40 @@ impl Client {
     /// Tries to build an `IpcConnection` with `build_connection`.
     pub async fn build_ipc_connection(timeout: Option<Duration>) -> Result<Self> {
         Self::build_connection::<IpcConnection>(timeout).await
+    }
+
+    /// Sends a request that awaits for a message response. An optional timeout
+    /// can be given.
+    pub async fn request(&mut self, msg_ty: MessageType, mut json: serde_json::Value,
+        timeout: Option<Duration>) -> Result<Message> {
+
+        // Slap on an identifier, we expect this same identifier on the result
+        let nonce = nonce();
+        json["nonce"] = serde_json::Value::String(nonce.clone());
+        let msg = Message::new(msg_ty, json);
+        // Write it
+        let writer = Pin::new(&mut self.writer);
+        msg.encode_to(writer).await?;
+
+        // We loop to wait for a response
+        let messages = self.messages.clone();
+        let join = task::spawn(async move {
+            loop {
+                if let Some(msg) = messages.lock().await.remove(&nonce) {
+                    return Ok(msg);
+                }
+                task::yield_now().await;
+            }
+        });
+
+        // Wrap it into a timeout if needed
+        if let Some(timeout) = timeout {
+            let join = time::timeout(timeout, join);
+            join.await??
+        }
+        else {
+            join.await?
+        }
     }
 }
 
