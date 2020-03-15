@@ -28,13 +28,37 @@ pub struct Client {
 
 impl Client {
     /// Creates a new `Client` from the given `Connection`.
-    pub async fn from_connection(connection: impl Connection) -> Self {
-        let (reader, writer) = connection.split();
+    pub async fn from_connection(connection: impl Connection) -> Result<Self> {
+        let (mut reader, writer) = connection.split();
         let writer = Box::new(writer);
 
         let messages = Arc::new(Mutex::new(HashMap::new()));
 
-        Self{ writer, messages }
+        let ms = messages.clone();
+        // TODO: A way to stop this?
+        task::spawn(async move {
+            let mut reader = Pin::new(&mut reader);
+            loop {
+                task::yield_now().await;
+                println!("X");
+                if let Ok(msg) = Message::decode_from(&mut reader).await {
+                    println!("Y");
+                    if let Some(nonce) = msg.nonce() {
+                        println!("Z");
+                        ms.lock().await.insert(nonce.to_string(), msg);
+                    }
+                    else {
+                        // TODO: What to do with messages without `"nonce"`?
+                    }
+                }
+                else {
+                    // TODO: What to do with bad messages?
+                }
+                task::yield_now().await;
+            }
+        });
+
+        Ok(Self{ writer, messages })
     }
 
     /// Tries to build a `Connection` for all the possible Discord servers and
@@ -42,8 +66,10 @@ impl Client {
     /// trial.
     pub async fn build_connection<C: Connection>(timeout: Option<Duration>) -> Result<Self> {
         for i in 0..10 {
-            if let Ok(c) = C::connect(i, timeout).await {
-                return Ok(Self::from_connection(c).await);
+            if let Ok(conn) = C::connect(i, timeout).await {
+                if let Ok(client) = Self::from_connection(conn).await {
+                    return Ok(client);
+                }
             }
         }
         Err(Error::DiscordNotRunning)
@@ -70,6 +96,8 @@ impl Client {
         // We loop to wait for a response
         let messages = self.messages.clone();
         let join = task::spawn(async move {
+            // TODO: This could be improved with semaphores
+            // When a read happens, notify all threads
             loop {
                 if let Some(msg) = messages.lock().await.remove(&nonce) {
                     return Ok(msg);
@@ -86,6 +114,15 @@ impl Client {
         else {
             join.await?
         }
+    }
+
+    // TODO: Client ID
+    /// Sends an authorization request. An optional timeout can be given.
+    pub async fn authorize(&mut self, timeout: Option<Duration>) -> Result<Message> {
+        self.request(MessageType::Handshake, serde_json::json!{{
+            "client_id": "192741864418312192",
+            "v": 1
+        }}, timeout).await
     }
 }
 

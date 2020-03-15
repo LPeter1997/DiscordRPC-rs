@@ -11,7 +11,7 @@ use crate::Result;
 #[async_trait]
 pub trait Connection: Sized {
     /// The type that the connection exposes for reading.
-    type ReadHalf: AsyncRead + Unpin + 'static;
+    type ReadHalf: AsyncRead + Send + Unpin + 'static;
     /// The type that the connection exposes for writing.
     type WriteHalf: AsyncWrite + Unpin + 'static;
 
