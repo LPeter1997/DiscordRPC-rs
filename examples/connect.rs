@@ -2,6 +2,7 @@ use dc_rpc_rs::*;
 
 #[tokio::main]
 async fn main() {
+    let mut conn
     if let Ok(mut c) = Client::build_ipc_connection(None).await {
         println!("Ok");
         if let Ok(resp) = c.authorize(None).await {
