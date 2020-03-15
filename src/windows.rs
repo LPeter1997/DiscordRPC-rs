@@ -1,6 +1,6 @@
 //! Implementation of a named-pipe `Connection` on Windows.
 
-#![cfg(windows)]
+#![cfg(target_os = "windows")]
 
 use std::ptr;
 use std::io;

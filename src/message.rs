@@ -1,8 +1,7 @@
 //! Messages that can be sent through connections.
 
 use std::convert::{TryFrom, TryInto};
-use std::marker::Unpin;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::io::{Read, Write};
 use crate::{Result, Error};
 
 /// The different message types.
@@ -61,7 +60,7 @@ impl Message {
     }
 
     /// Tries to encode this `Message` to the given writer.
-    pub async fn encode_to(&self, mut writer: impl AsyncWriteExt + Unpin) -> Result<()> {
+    pub fn encode_to(&self, mut writer: impl Write) -> Result<()> {
         let payload = self.payload.to_string();
         let mut buffer = Vec::with_capacity(8 + payload.len());
 
@@ -71,23 +70,23 @@ impl Message {
         buffer.extend_from_slice(&payload_len.to_le_bytes());
         buffer.extend_from_slice(payload.as_bytes());
 
-        writer.write(&buffer).await?;
+        writer.write(&buffer)?;
 
-        writer.flush().await?;
+        writer.flush()?;
         Ok(())
     }
 
     /// Tries to decode a `Message` from the given reader.
-    pub async fn decode_from(mut reader: impl AsyncReadExt + Unpin) -> Result<Self> {
+    pub async fn decode_from(mut reader: impl Read) -> Result<Self> {
         let mut ty = [0u8; 4];
         let mut len = [0u8; 4];
-        reader.read_exact(&mut ty).await?;
+        reader.read_exact(&mut ty)?;
         let ty = u32::from_le_bytes(ty);
         let ty: MessageType = ty.try_into()?;
-        reader.read_exact(&mut len).await?;
+        reader.read_exact(&mut len)?;
         let len = u32::from_le_bytes(len);
         let mut payload = vec![0u8; len as usize];
-        reader.read_exact(&mut payload).await?;
+        reader.read_exact(&mut payload)?;
         let payload = String::from_utf8(payload)?;
         let payload = serde_json::from_str(&payload)?;
         Ok(Self::new(ty, payload))
