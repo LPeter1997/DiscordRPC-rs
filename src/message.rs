@@ -54,9 +54,9 @@ impl Message {
         Self{ msg_type, payload }
     }
 
-    /// Returns the value under the key `"nonce"`, if found.
-    pub fn nonce(&self) -> Option<&str> {
-        self.payload["nonce"].as_str()
+    /// Returns the value under a given key, if found.
+    pub fn value(&self, key: &str) -> Option<&str> {
+        self.payload[key].as_str()
     }
 
     /// Tries to encode this `Message` to the given writer.

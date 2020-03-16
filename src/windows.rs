@@ -2,13 +2,9 @@
 
 #![cfg(target_os = "windows")]
 
-use std::ptr;
-use std::io;
-use crate::{Result, Error, Connection};
-
 /// WINAPI bindings.
 mod winapi {
-    use std::ptr;
+    // Type aliases
 
     pub type VOID    = std::ffi::c_void;
     pub type LPVOID  = *mut VOID;
@@ -25,14 +21,20 @@ mod winapi {
     pub type LPCWSTR = *const WCHAR;
     pub type HANDLE  = LPVOID;
 
+    // Constants
+
     pub const GENERIC_READ        : DWORD  = 0x80000000;
     pub const GENERIC_WRITE       : DWORD  = 0x40000000;
     pub const OPEN_EXISTING       : DWORD  = 3;
+    pub const ERROR_FILE_NOT_FOUND: DWORD  = 2;
+    pub const ERROR_PIPE_BUSY     : DWORD  = 231;
     pub const INVALID_HANDLE_VALUE: HANDLE = -1isize as HANDLE;
+
+    // Bindings
 
     #[link(name = "kernel32")]
     extern "system" {
-        fn MultiByteToWideChar(
+        pub fn MultiByteToWideChar(
             CodePage      : UINT  ,
             dwFlags       : DWORD ,
             lpMultiByteStr: LPCSTR,
@@ -40,6 +42,8 @@ mod winapi {
             lpWideCharStr : LPWSTR,
             cchWideChar   : INT   ,
         ) -> INT;
+
+        pub fn GetLastError() -> DWORD;
 
         pub fn CreateFileW(
             lpFileName           : LPCWSTR,
@@ -75,6 +79,11 @@ mod winapi {
             hFile: HANDLE,
         ) -> BOOL;
 
+        pub fn WaitNamedPipeW(
+            lpNamedPipeName: LPCWSTR,
+            nTimeOut       : DWORD  ,
+        ) -> BOOL;
+
         pub fn PeekNamedPipe(
             hNamedPipe            : HANDLE ,
             lpBuffer              : LPVOID ,
@@ -84,125 +93,125 @@ mod winapi {
             lpBytesLeftThisMessage: LPDWORD,
         ) -> BOOL;
     }
+}
 
-    /// Helper to convert a UTF-8 string to UTF-16.
-    pub fn utf8_to_utf16(s: &str) -> Box<[WCHAR]> {
-        const CP_UTF8: UINT = 65001;
-        // Null terminate
-        let mut s = s.to_string();
-        s.push('\0');
-        // Actual conversion
-        let len = unsafe{ MultiByteToWideChar(CP_UTF8, 0, s.as_ptr().cast(), -1, ptr::null_mut(), 0) };
-        let mut res = Vec::with_capacity(len as usize);
-        unsafe {
-            MultiByteToWideChar(CP_UTF8, 0, s.as_ptr().cast(), -1, res.as_mut_ptr(), len);
-            res.set_len(len as usize);
-        }
-        res.into_boxed_slice()
+use std::ptr;
+use winapi::*;
+use crate::Connection;
+
+/// Helper to convert a UTF-8 string to UTF-16.
+fn utf8_to_utf16(s: &str) -> Box<[WCHAR]> {
+    const CP_UTF8: UINT = 65001;
+    // Null terminate
+    let mut s = s.to_string();
+    s.push('\0');
+    // Actual conversion
+    let len = unsafe{ MultiByteToWideChar(CP_UTF8, 0, s.as_ptr().cast(), -1, ptr::null_mut(), 0) };
+    let mut res = Vec::with_capacity(len as usize);
+    unsafe {
+        MultiByteToWideChar(CP_UTF8, 0, s.as_ptr().cast(), -1, res.as_mut_ptr(), len);
+        res.set_len(len as usize);
     }
+    res.into_boxed_slice()
 }
 
 pub struct NamedPipe {
-    handle: winapi::HANDLE,
+    handle: HANDLE,
 }
 
 impl NamedPipe {
-    fn open(path: &str) -> io::Result<Self> {
-        let path = winapi::utf8_to_utf16(path);
-        let handle = unsafe { winapi::CreateFileW(
-            path.as_ptr(),
-            winapi::GENERIC_READ | winapi::GENERIC_WRITE,
-            0,
-            ptr::null_mut(),
-            winapi::OPEN_EXISTING,
-            0,
-            ptr::null_mut()) };
-        if handle == winapi::INVALID_HANDLE_VALUE {
-            Err(io::Error::new(
-                io::ErrorKind::NotFound, "The pipe could not be opened!"))
-        }
-        else {
-            Ok(Self{ handle })
-        }
-    }
-}
-
-impl io::Read for NamedPipe {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let mut nread = 0;
-        if unsafe { winapi::ReadFile(
-            self.handle,
-            buf.as_mut_ptr().cast(),
-            buf.len() as winapi::DWORD,
-            &mut nread,
-            ptr::null_mut()) } == 0 {
-
-            Err(io::Error::new(io::ErrorKind::Other, "Could not read!"))
-        }
-        else {
-            Ok(nread as usize)
-        }
-    }
-}
-
-impl io::Write for NamedPipe {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let mut nwritten = 0;
-        if unsafe { winapi::WriteFile(
-            self.handle,
-            buf.as_ptr().cast(),
-            buf.len() as winapi::DWORD,
-            &mut nwritten,
-            ptr::null_mut()) } == 0 {
-
-            Err(io::Error::new(io::ErrorKind::Other, "Could not write!"))
-        }
-        else {
-            Ok(nwritten as usize)
-        }
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        if unsafe{ winapi::FlushFileBuffers(self.handle) } == 0 {
-            Err(io::Error::new(io::ErrorKind::Other, "Could not flush!"))
-        }
-        else {
-            Ok(())
-        }
+    /// Creates a new `NamedPipe`.
+    pub fn new() -> Self {
+        Self{ handle: INVALID_HANDLE_VALUE }
     }
 }
 
 impl Connection for NamedPipe {
-    fn connect(index: usize) -> Result<Self> {
-        let address = format!(r#"\\.\pipe\discord-ipc-{}"#, index);
-        Ok(Self::open(&address)?)
+    fn open(&mut self) -> bool {
+        if self.is_open() {
+            return true;
+        }
+        // Try all 10 slots
+        let mut index = 0;
+        loop {
+            let pipe_name = format!(r#"\\.\pipe\discord-ipc-{}"#, index);
+            let pipe_name = utf8_to_utf16(&pipe_name);
+            let pipe_name = pipe_name.as_ptr();
+
+            self.handle = unsafe { CreateFileW(
+                pipe_name, GENERIC_READ | GENERIC_WRITE, 0, ptr::null_mut(), OPEN_EXISTING, 0, ptr::null_mut()) };
+            if self.handle != INVALID_HANDLE_VALUE {
+                return true;
+            }
+
+            let last_error = unsafe{ GetLastError() };
+            if last_error == ERROR_FILE_NOT_FOUND {
+                // Can't do anything
+                if index < 9 {
+                    index += 1;
+                    continue;
+                }
+            }
+            else if last_error == ERROR_PIPE_BUSY {
+                if unsafe{ WaitNamedPipeW(pipe_name, 10000) } == 0 {
+                    return false;
+                }
+                continue;
+            }
+            return false;
+        }
     }
 
-    fn can_read(&mut self) -> Result<bool> {
-        let mut navail = 0;
-        if unsafe { winapi::PeekNamedPipe(
-            self.handle,
-            ptr::null_mut(),
-            0,
-            ptr::null_mut(),
-            &mut navail,
-            ptr::null_mut()) } == 0 {
+    fn is_open(&self) -> bool {
+        self.handle != INVALID_HANDLE_VALUE
+    }
 
-            Err(Error::IoError(
-                io::Error::new(io::ErrorKind::Other, "Could not peek!")))
+    fn close(&mut self) {
+        unsafe { CloseHandle(self.handle) };
+        self.handle = INVALID_HANDLE_VALUE;
+    }
+
+    fn read(&mut self, buffer: &mut [u8]) -> bool {
+        if !self.is_open() {
+            return false;
+        }
+        let mut bytes_available = 0;
+        if unsafe { PeekNamedPipe(
+            self.handle, ptr::null_mut(), 0, ptr::null_mut(), &mut bytes_available, ptr::null_mut()) } != 0 {
+            let mut bytes_read = 0;
+            if unsafe { ReadFile(
+                self.handle, buffer.as_mut_ptr().cast(), buffer.len() as DWORD, &mut bytes_read, ptr::null_mut()) } != 0 {
+                return true;
+            }
+            else {
+                self.close();
+            }
         }
         else {
-            Ok(navail != 0)
+            self.close();
         }
+        false
+    }
+
+    fn write(&mut self, buffer: &[u8]) -> bool {
+        if buffer.len() == 0 {
+            return true;
+        }
+        if !self.is_open() {
+            return false;
+        }
+        let mut bytes_written = 0;
+        if unsafe { WriteFile(
+            self.handle, buffer.as_ptr().cast(), buffer.len() as DWORD, &mut bytes_written, ptr::null_mut()) } != 0 {
+            unsafe{ FlushFileBuffers(self.handle) };
+            return bytes_written == buffer.len() as DWORD;
+        }
+        false
     }
 }
 
 impl Drop for NamedPipe {
     fn drop(&mut self) {
-        if !self.handle.is_null() {
-            unsafe {
-                winapi::CloseHandle(self.handle);
-            }
-        }
+        self.close();
     }
 }
