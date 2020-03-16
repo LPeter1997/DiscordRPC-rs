@@ -1,8 +1,7 @@
 //! Messages that can be sent through connections.
 
 use std::convert::{TryFrom, TryInto};
-use std::io::{Read, Write};
-use crate::{Result, Error};
+use crate::Connection;
 
 /// The different message types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -27,16 +26,16 @@ impl Into<u32> for MessageType {
 }
 
 impl TryFrom<u32> for MessageType {
-    type Error = Error;
+    type Error = ();
 
-    fn try_from(n: u32) -> Result<Self> {
+    fn try_from(n: u32) -> Result<Self, ()> {
         match n {
             0 => Ok(Self::Handshake),
             1 => Ok(Self::Frame),
             2 => Ok(Self::Close),
             3 => Ok(Self::Ping),
             4 => Ok(Self::Pong),
-            x => Err(Error::MessageTypeError(x)),
+            x => Err(()),
         }
     }
 }
@@ -54,13 +53,24 @@ impl Message {
         Self{ msg_type, payload }
     }
 
+    /// Returns the `MessageType` of this `Message`.
+    pub fn ty(&self) -> MessageType {
+        self.msg_type
+    }
+
     /// Returns the value under a given key, if found.
     pub fn value(&self, key: &str) -> Option<&str> {
         self.payload[key].as_str()
     }
 
-    /// Tries to encode this `Message` to the given writer.
-    pub fn encode_to(&self, mut writer: impl Write) -> Result<()> {
+    /// Sets the `MessageType` of this `Message`.
+    pub fn set_ty(&mut self, ty: MessageType) {
+        self.msg_type = ty;
+    }
+
+    /// Tries to encode this `Message` to the given writer. Returns `true` on
+    /// success.
+    pub fn encode_to(&self, conn: &mut dyn Connection) -> bool {
         let payload = self.payload.to_string();
         let mut buffer = Vec::with_capacity(8 + payload.len());
 
@@ -70,25 +80,32 @@ impl Message {
         buffer.extend_from_slice(&payload_len.to_le_bytes());
         buffer.extend_from_slice(payload.as_bytes());
 
-        writer.write(&buffer)?;
-
-        writer.flush()?;
-        Ok(())
+        conn.write(&buffer)
     }
 
     /// Tries to decode a `Message` from the given reader.
-    pub async fn decode_from(mut reader: impl Read) -> Result<Self> {
+    pub fn decode_from(conn: &mut dyn Connection) -> Option<Self> {
         let mut ty = [0u8; 4];
         let mut len = [0u8; 4];
-        reader.read_exact(&mut ty)?;
+        if !conn.read(&mut ty) {
+            return None;
+        }
         let ty = u32::from_le_bytes(ty);
-        let ty: MessageType = ty.try_into()?;
-        reader.read_exact(&mut len)?;
-        let len = u32::from_le_bytes(len);
-        let mut payload = vec![0u8; len as usize];
-        reader.read_exact(&mut payload)?;
-        let payload = String::from_utf8(payload)?;
-        let payload = serde_json::from_str(&payload)?;
-        Ok(Self::new(ty, payload))
+        if let Ok(ty) = ty.try_into() {
+            if !conn.read(&mut len) {
+                return None;
+            }
+            let len = u32::from_le_bytes(len);
+            let mut payload = vec![0u8; len as usize];
+            if !conn.read(&mut payload) {
+                return None;
+            }
+            if let Ok(payload) = String::from_utf8(payload) {
+                if let Ok(payload) = serde_json::from_str(&payload) {
+                    return Some(Self::new(ty, payload));
+                }
+            }
+        }
+        None
     }
 }

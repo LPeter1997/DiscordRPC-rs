@@ -115,6 +115,7 @@ fn utf8_to_utf16(s: &str) -> Box<[WCHAR]> {
     res.into_boxed_slice()
 }
 
+#[derive(Debug)]
 pub struct NamedPipe {
     handle: HANDLE,
 }

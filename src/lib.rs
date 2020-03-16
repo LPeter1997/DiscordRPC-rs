@@ -1,13 +1,13 @@
 //! TODO: Introduce
 
-//mod error;
-//pub use error::*;
+pub mod connection;
+use connection::*;
 
-mod connection;
-pub use connection::*;
+mod message;
+use message::*;
 
 mod windows;
-//mod message;
+use windows::*;
 
-//mod client;
-//pub use client::*;
+mod client;
+use client::*;
