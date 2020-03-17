@@ -52,7 +52,7 @@ impl Client {
             if let Some(message) = self.read() {
                 let cmd = message.value("cmd");
                 let evt = message.value("evt");
-                if cmd.is_some() && evt.is_some() && cmd != Some("DISPATCH") && evt != Some("READY") {
+                if cmd == Some("DISPATCH") && evt == Some("READY") {
                     self.state = State::Connected;
                     // TODO: On connected event handler
                 }
