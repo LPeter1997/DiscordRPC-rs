@@ -1,7 +1,8 @@
 //! Messages that can be sent through connections.
 
 use std::convert::{TryFrom, TryInto};
-use crate::Connection;
+use serde_json as json;
+use crate::{Connection, RichPresence, pid, nonce};
 
 /// The different message types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -35,7 +36,7 @@ impl TryFrom<u32> for MessageType {
             2 => Ok(Self::Close),
             3 => Ok(Self::Ping),
             4 => Ok(Self::Pong),
-            x => Err(()),
+            _ => Err(()),
         }
     }
 }
@@ -44,13 +45,52 @@ impl TryFrom<u32> for MessageType {
 #[derive(Debug, Clone)]
 pub struct Message {
     msg_type: MessageType,
-    payload: serde_json::Value,
+    payload: json::Value,
 }
 
 impl Message {
     /// Creates a `Message` with the given `MessageType` and payload.
-    pub fn new(msg_type: MessageType, payload: serde_json::Value) -> Self {
+    pub fn new(msg_type: MessageType, payload: json::Value) -> Self {
         Self{ msg_type, payload }
+    }
+
+    /// Creates a `Message` for setting a `RichPresence`.
+    pub fn rich_presence(rp: Option<RichPresence>) -> Self {
+        // Helpers
+        fn write_opt_string(json: &mut json::Value, key: &str, val: String) {
+            if !val.is_empty() {
+                json[key] = json::Value::String(val);
+            }
+        }
+
+        let mut json = json::json!{{
+            "nonce": nonce(),
+            "cmd": "SET_ACTIVITY",
+        }};
+        let mut args = json::json!{{
+            "pid": pid(),
+        }};
+
+        if let Some(rp) = rp {
+            let mut activity = json::json!{{}};
+
+            write_opt_string(&mut activity, "state", rp.state);
+            write_opt_string(&mut activity, "details", rp.details);
+            activity["instance"] = json::Value::Bool(rp.instance);
+
+            // TODO: Timestamps
+
+            // TODO: Assets
+
+            // TODO: Party
+
+            // TODO: Secrets
+
+            args["activity"] = activity;
+        }
+
+        json["args"] = args;
+        Self::new(MessageType::Frame, json)
     }
 
     /// Returns the `MessageType` of this `Message`.

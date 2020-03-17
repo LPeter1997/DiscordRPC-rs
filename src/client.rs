@@ -64,7 +64,7 @@ impl Client {
                 "v": 1,
                 "client_id": self.app_id,
             }});
-            if handshake.encode_to(self.connection.as_mut()) {
+            if self.write(handshake) {
                 self.state = State::SentHandshake;
             }
             else {
@@ -100,8 +100,9 @@ impl Client {
                         return Some(message);
                     },
                     MessageType::Ping => {
+                        // Ping-pong
                         message.set_ty(MessageType::Pong);
-                        if !message.encode_to(self.connection.as_mut()) {
+                        if !self.write(message) {
                             self.close();
                         }
                     },
@@ -124,21 +125,15 @@ impl Client {
             }
         }
     }
+
+    /// Tries to write a `Message` to the server. Returns `false` on failure.
+    pub fn write(&mut self, message: Message) -> bool {
+        message.encode_to(self.connection.as_mut())
+    }
 }
 
 impl Drop for Client {
     fn drop(&mut self) {
         self.close();
     }
-}
-
-/// Returns the current processes ID.
-fn pid() -> u32 {
-    std::process::id()
-}
-
-/// Returns a UUID `String`
-fn nonce() -> String {
-    use uuid::Uuid;
-    Uuid::new_v4().to_string()
 }

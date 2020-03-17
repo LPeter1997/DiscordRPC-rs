@@ -180,13 +180,16 @@ impl Connection for NamedPipe {
         let mut bytes_available = 0;
         if unsafe { PeekNamedPipe(
             self.handle, ptr::null_mut(), 0, ptr::null_mut(), &mut bytes_available, ptr::null_mut()) } != 0 {
-            let mut bytes_read = 0;
-            if unsafe { ReadFile(
-                self.handle, buffer.as_mut_ptr().cast(), buffer.len() as DWORD, &mut bytes_read, ptr::null_mut()) } != 0 {
-                return true;
-            }
-            else {
-                self.close();
+
+            if bytes_available >= buffer.len() as DWORD {
+                let mut bytes_read = 0;
+                if unsafe { ReadFile(
+                    self.handle, buffer.as_mut_ptr().cast(), buffer.len() as DWORD, &mut bytes_read, ptr::null_mut()) } != 0 {
+                    return true;
+                }
+                else {
+                    self.close();
+                }
             }
         }
         else {

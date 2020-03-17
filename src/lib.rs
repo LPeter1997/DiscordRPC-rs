@@ -5,6 +5,7 @@ use sync::atomic::{AtomicBool, Ordering};
 use sync::{Arc, Mutex, Condvar};
 use std::thread;
 use std::time::{SystemTime, Duration};
+use std::collections::VecDeque;
 
 pub mod connection;
 use connection::*;
@@ -13,7 +14,6 @@ mod message;
 use message::*;
 
 mod windows;
-use windows::*;
 
 mod client;
 use client::*;
@@ -47,6 +47,31 @@ impl DiscordRPC {
     pub fn start(&mut self) {
         self.io_proc.start();
     }
+
+    /// Sets the `RichPresence` for the Discord server.
+    pub fn set_rich_presence(&mut self, rp: Option<RichPresence>) {
+        self.io_proc.send(Message::rich_presence(rp));
+    }
+}
+
+/// Represents a rich-presence description for Discord.
+#[derive(Debug, Default, Clone)]
+pub struct RichPresence {
+    pub state: String,
+    pub details: String,
+    pub start_timestamp: Option<SystemTime>,
+    pub end_timestamp: Option<SystemTime>,
+    pub large_image_key: String,
+    pub large_image_text: String,
+    pub small_image_key: String,
+    pub small_image_text: String,
+    pub party_id: String,
+    pub party_size: usize,
+    pub party_max: usize,
+    pub match_secret: String,
+    pub join_secret: String,
+    pub spectate_secret: String,
+    pub instance: bool,
 }
 
 /// The IO thread manager.
@@ -55,6 +80,7 @@ struct IoProcess {
     keep_running: Arc<AtomicBool>,
     wait_for_io_mux: Arc<Mutex<()>>,
     wait_for_io_cv: Arc<Condvar>,
+    send_queue: Arc<Mutex<VecDeque<Message>>>,
     thread_handle: Option<thread::JoinHandle<Client>>,
 }
 
@@ -64,11 +90,13 @@ impl IoProcess {
         let keep_running = Arc::new(AtomicBool::new(true));
         let wait_for_io_mux = Arc::new(Mutex::new(()));
         let wait_for_io_cv = Arc::new(Condvar::new());
-        Self {
+        let send_queue = Arc::new(Mutex::new(VecDeque::new()));
+        Self{
             client: Some(client),
             keep_running,
             wait_for_io_mux,
             wait_for_io_cv,
+            send_queue,
             thread_handle: None,
         }
     }
@@ -85,16 +113,17 @@ impl IoProcess {
         let keep_running = self.keep_running.clone();
         let wait_for_io_mux = self.wait_for_io_mux.clone();
         let wait_for_io_cv = self.wait_for_io_cv.clone();
+        let send_queue = self.send_queue.clone();
 
         self.thread_handle = Some(thread::spawn(move || {
             const MAX_WAIT: Duration = Duration::from_millis(500);
 
             let mut last_connect = SystemTime::UNIX_EPOCH;
-            Self::update_client(&mut client, &mut last_connect);
+            Self::update_client(&mut client, &mut last_connect, &send_queue);
             while keep_running.load(Ordering::Relaxed) {
                 let lock = wait_for_io_mux.lock().unwrap();
                 let _ = wait_for_io_cv.wait_timeout(lock, MAX_WAIT);
-                Self::update_client(&mut client, &mut last_connect);
+                Self::update_client(&mut client, &mut last_connect, &send_queue);
             }
 
             client
@@ -117,8 +146,14 @@ impl IoProcess {
         self.wait_for_io_cv.notify_all();
     }
 
+    /// Sends a `Message` to the Discord RPC server.
+    fn send(&mut self, message: Message) {
+        self.send_queue.lock().unwrap().push_back(message);
+        self.notify();
+    }
+
     /// Updates the `Client` by doing IO.
-    fn update_client(client: &mut Client, last_connect: &mut SystemTime) {
+    fn update_client(client: &mut Client, last_connect: &mut SystemTime, send_queue: &Arc<Mutex<VecDeque<Message>>>) {
         if !client.is_open() {
             const RECONNECT_DELAY: Duration = Duration::from_millis(1000);
 
@@ -144,7 +179,7 @@ impl IoProcess {
             }
 
             let message = message.unwrap();
-            let evt = message.value("evt");
+            let _evt = message.value("evt");
             let nonce = message.value("nonce");
 
             // TODO: Finish these
@@ -159,7 +194,15 @@ impl IoProcess {
             println!("Read: {:?}", message);
         }
 
-        // TODO: Write all pending messages
+        // Write all pending messages
+        {
+            let mut send_queue = send_queue.lock().unwrap();
+            while let Some(msg) = send_queue.pop_front() {
+                if !client.write(msg) {
+                    // TODO: Retry?
+                }
+            }
+        }
     }
 }
 
@@ -167,4 +210,15 @@ impl Drop for IoProcess {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+/// Returns the current processes ID.
+fn pid() -> u32 {
+    std::process::id()
+}
+
+/// Returns a UUID `String`.
+fn nonce() -> String {
+    use uuid::Uuid;
+    Uuid::new_v4().to_string()
 }
