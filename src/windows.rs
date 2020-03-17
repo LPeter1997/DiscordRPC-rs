@@ -115,6 +115,7 @@ fn utf8_to_utf16(s: &str) -> Box<[WCHAR]> {
     res.into_boxed_slice()
 }
 
+/// Represents a named pipe `Connection` on Windows.
 #[derive(Debug)]
 pub struct NamedPipe {
     handle: HANDLE,
@@ -216,3 +217,5 @@ impl Drop for NamedPipe {
         self.close();
     }
 }
+
+unsafe impl Send for NamedPipe {}

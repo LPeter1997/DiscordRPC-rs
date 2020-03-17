@@ -2,7 +2,7 @@
 
 /// A trait that every connection type must implement. This is the main
 /// abstraction point for IPC and other communication methods between platforms.
-pub trait Connection {
+pub trait Connection: Send {
     /// Tries to open a connection to a Discord RPC server. Returns `true`, if
     /// the connection could be established.
     fn open(&mut self) -> bool;
