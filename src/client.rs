@@ -33,6 +33,11 @@ impl Client {
         Self::with_connection(IpcConnection::new(), app_id)
     }
 
+    /// Returns `true`, if the communication is alive.
+    pub fn is_open(&self) -> bool {
+        self.state == State::Connected
+    }
+
     /// Opens the `Client` for communication.
     pub fn open(&mut self) {
         if self.state == State::Connected {
