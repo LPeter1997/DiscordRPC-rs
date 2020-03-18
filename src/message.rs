@@ -88,6 +88,7 @@ impl Message {
             let start_time = time_to_u64(rp.start_timestamp);
             let end_time = time_to_u64(rp.end_timestamp);
 
+            // Timestamps
             if start_time.is_some() || end_time.is_some() {
                 let mut timestamps = json::json!{{}};
 
@@ -102,6 +103,7 @@ impl Message {
                 activity["timestamps"] = timestamps;
             }
 
+            // Assets
             if !rp.large_image_key.is_empty() || !rp.large_image_text.is_empty()
             || !rp.small_image_key.is_empty() || !rp.small_image_text.is_empty() {
                 let mut assets = json::json!{{}};
@@ -114,9 +116,33 @@ impl Message {
                 activity["assets"] = assets;
             }
 
-            // TODO: Party
+            // Party
+            if !rp.party_id.is_empty() || rp.party_size > 0 || rp.party_max > 0 {
+                let mut party = json::json!{{}};
 
-            // TODO: Secrets
+                write_opt_string(&mut party, "id", rp.party_id);
+                if rp.party_size > 0 && rp.party_max > 0 {
+                    party["size"] = json::Value::Array(vec![
+                        json::Value::Number(rp.party_size.into()),
+                        json::Value::Number(rp.party_max.into()),
+                    ]);
+                }
+
+                activity["party"] = party;
+            }
+
+            // Secrets
+            if !rp.match_secret.is_empty()
+            || !rp.join_secret.is_empty()
+            || !rp.spectate_secret.is_empty() {
+                let mut secrets = json::json!{{}};
+
+                write_opt_string(&mut secrets, "match", rp.match_secret);
+                write_opt_string(&mut secrets, "join", rp.join_secret);
+                write_opt_string(&mut secrets, "spectate", rp.spectate_secret);
+
+                activity["secrets"] = secrets;
+            }
 
             args["activity"] = activity;
         }
