@@ -7,6 +7,9 @@ use std::thread;
 use std::time::{SystemTime, Duration};
 use std::collections::VecDeque;
 
+mod error;
+pub use error::*;
+
 pub mod connection;
 use connection::*;
 
@@ -17,6 +20,8 @@ mod windows;
 
 mod client;
 use client::*;
+
+// TODO: Store presence so at reconnect we can re-queue it?
 
 /// The Discord RPC client to communicate with the local Discord server.
 pub struct DiscordRPC {
@@ -74,7 +79,7 @@ pub struct RichPresence {
     pub instance: bool,
 }
 
-/// The IO thread manager.
+/// The IO thread manager that basically lets us run in a non-blocking way.
 struct IoProcess {
     client: Option<Client>,
     keep_running: Arc<AtomicBool>,
@@ -182,16 +187,15 @@ impl IoProcess {
             let _evt = message.value("evt");
             let nonce = message.value("nonce");
 
-            // TODO: Finish these
             if nonce.is_some() {
-
+                // TODO: If evt == "ERROR", report error
             }
             else {
-
+                // TODO:
+                // - ACTIVITY_JOIN
+                // - ACTIVITY_SPECTATE
+                // - ACTIVITY_JOIN_REQUEST
             }
-
-            // TODO: For now we log
-            println!("Read: {:?}", message);
         }
 
         // Write all pending messages

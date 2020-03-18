@@ -1,6 +1,6 @@
 //! The RPC client based on a `Connection`.
 
-use crate::{Connection, IpcConnection, Message, MessageType};
+use crate::{Connection, IpcConnection, Message, MessageType, Error};
 
 /// Represents the different states the `Client` can be in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,6 +15,10 @@ pub struct Client {
     connection: Box<dyn Connection>,
     state: State,
     app_id: String,
+    // Event handlers
+    on_connect: Box<dyn Fn() + Send>,
+    on_error: Box<dyn Fn(Error) + Send>,
+    on_disconnect: Box<dyn Fn() + Send>,
 }
 
 impl Client {
@@ -24,6 +28,10 @@ impl Client {
             connection: Box::new(connection),
             state: State::Disconnected,
             app_id: app_id.to_string(),
+
+            on_connect: Box::new(|| {}),
+            on_error: Box::new(|_| {}),
+            on_disconnect: Box::new(|| {}),
         }
     }
 
@@ -54,7 +62,7 @@ impl Client {
                 let evt = message.value("evt");
                 if cmd == Some("DISPATCH") && evt == Some("READY") {
                     self.state = State::Connected;
-                    // TODO: On connected event handler
+                    (self.on_connect)();
                 }
             }
         }
@@ -76,7 +84,7 @@ impl Client {
     /// Closes the `Client` from further communication.
     pub fn close(&mut self) {
         if self.state == State::Connected || self.state == State::SentHandshake {
-            // TODO: On disconnected event handler
+            (self.on_disconnect)();
         }
         self.connection.close();
         self.state = State::Disconnected;
@@ -89,10 +97,23 @@ impl Client {
         }
 
         loop {
-            if let Some(mut message) = Message::decode_from(self.connection.as_mut()) {
+            let message = Message::decode_from(self.connection.as_mut());
+            if message.is_err() {
+                let err = message.unwrap_err();
+                (self.on_error)(err);
+                self.close();
+                return None;
+            }
+
+            let message = message.unwrap();
+            if let Some(mut message) = message {
                 match message.ty() {
                     MessageType::Close => {
-                        // TODO: Message probably contains an error description
+                        // Forced by server, read description, send error
+                        let code = message.value("code")
+                            .and_then(|s| s.parse::<i32>().ok()).unwrap_or(0);
+                        let message = message.value("message").unwrap_or("<none>").to_string();
+                        (self.on_error)(Error::ConnectionClosed{ code, message });
                         self.close();
                         return None;
                     },
@@ -100,25 +121,29 @@ impl Client {
                         return Some(message);
                     },
                     MessageType::Ping => {
-                        // Ping-pong
+                        // Send pong
                         message.set_ty(MessageType::Pong);
                         if !self.write(message) {
+                            // If we couldn't send Pong, close
                             self.close();
                         }
                     },
-                    MessageType::Pong => {},
-                    MessageType::Handshake => {
-                        // TODO: Big OOF error
+                    MessageType::Pong => {
+                        // No-op
+                    },
+                    x => {
+                        // Any other message type is invalid here
+                        (self.on_error)(Error::InvalidMessage(format!(
+                            "Message of type {:?} can't be sent by the server!", x)));
+                        self.close();
                         return None;
                     },
                 }
             }
             else {
-                // TODO: Not only pipe closed but stuff like partial data, invalid
-                // message type, ...
-                // For now we don't care, there's no error interface yet
                 if !self.connection.is_open() {
-                    // TODO: Pipe Closed error
+                    // TODO: Can we get the reason?
+                    (self.on_error)(Error::PipeClosed("Unknown reason".into()));
                     self.close();
                 }
                 return None;

@@ -3,7 +3,7 @@
 use std::convert::{TryFrom, TryInto};
 use std::time;
 use serde_json as json;
-use crate::{Connection, RichPresence, pid, nonce};
+use crate::{Connection, RichPresence, Error, pid, nonce};
 
 /// The different message types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -28,16 +28,17 @@ impl Into<u32> for MessageType {
 }
 
 impl TryFrom<u32> for MessageType {
-    type Error = ();
+    type Error = Error;
 
-    fn try_from(n: u32) -> Result<Self, ()> {
+    fn try_from(n: u32) -> Result<Self, Self::Error> {
         match n {
             0 => Ok(Self::Handshake),
             1 => Ok(Self::Frame),
             2 => Ok(Self::Close),
             3 => Ok(Self::Ping),
             4 => Ok(Self::Pong),
-            _ => Err(()),
+            x => Err(Error::InvalidMessage(
+                format!("Unknown message-type identifier {}!", x))),
         }
     }
 }
@@ -182,28 +183,36 @@ impl Message {
     }
 
     /// Tries to decode a `Message` from the given reader.
-    pub fn decode_from(conn: &mut dyn Connection) -> Option<Self> {
+    pub fn decode_from(conn: &mut dyn Connection) -> Result<Option<Self>, Error> {
         let mut ty = [0u8; 4];
         let mut len = [0u8; 4];
+
+        // Message type
         if !conn.read(&mut ty) {
-            return None;
+            return Ok(None);
         }
+
         let ty = u32::from_le_bytes(ty);
-        if let Ok(ty) = ty.try_into() {
-            if !conn.read(&mut len) {
-                return None;
-            }
-            let len = u32::from_le_bytes(len);
-            let mut payload = vec![0u8; len as usize];
-            if !conn.read(&mut payload) {
-                return None;
-            }
-            if let Ok(payload) = String::from_utf8(payload) {
-                if let Ok(payload) = serde_json::from_str(&payload) {
-                    return Some(Self::new(ty, payload));
-                }
-            }
+        let ty: MessageType = ty.try_into()?;
+        if !conn.read(&mut len) {
+            return Err(Error::InvalidMessage("Could not read message length!".into()));
         }
-        None
+        let len = u32::from_le_bytes(len);
+        let mut payload = vec![0u8; len as usize];
+        if !conn.read(&mut payload) {
+            return Err(Error::InvalidMessage("Partially read message frame!".into()));
+        }
+        let payload =  String::from_utf8(payload);
+        if payload.is_err() {
+            return Err(Error::InvalidMessage(format!(
+                "Invalid message frame encoding: {}", payload.unwrap_err())));
+        }
+        let payload: json::Result<json::Value> = json::from_str(&payload.unwrap());
+        if payload.is_err() {
+            return Err(Error::InvalidMessage(format!(
+                "Invalid message frame json: {}", payload.unwrap_err())));
+        }
+        let payload = payload.unwrap();
+        Ok(Some(Message::new(ty, payload)))
     }
 }
