@@ -1,7 +1,7 @@
 use dc_rpc_rs::*;
 
 fn main() {
-    let mut conn = DiscordRPC::new("123784432336");
+    let mut conn = DiscordRPC::new("683696447815811121");
     conn.start();
 
     let mut rp = RichPresence::default();

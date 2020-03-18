@@ -1,6 +1,7 @@
 //! Messages that can be sent through connections.
 
 use std::convert::{TryFrom, TryInto};
+use std::time;
 use serde_json as json;
 use crate::{Connection, RichPresence, pid, nonce};
 
@@ -63,6 +64,12 @@ impl Message {
             }
         }
 
+        fn time_to_u64(t: Option<time::SystemTime>) -> Option<u64> {
+            t.ok_or(())
+                .and_then(|t| t.duration_since(time::UNIX_EPOCH).map_err(|_| ()))
+                .map(|t| t.as_secs()).ok()
+        }
+
         let mut json = json::json!{{
             "nonce": nonce(),
             "cmd": "SET_ACTIVITY",
@@ -78,7 +85,22 @@ impl Message {
             write_opt_string(&mut activity, "details", rp.details);
             activity["instance"] = json::Value::Bool(rp.instance);
 
-            // TODO: Timestamps
+            let start_time = time_to_u64(rp.start_timestamp);
+            let end_time = time_to_u64(rp.end_timestamp);
+
+            if start_time.is_some() || end_time.is_some() {
+                let mut timestamps = json::json!{{}};
+
+                if let Some(start) = start_time {
+                    timestamps["start"] = json::Value::Number(start.into());
+                }
+
+                if let Some(end) = end_time {
+                    timestamps["end"] = json::Value::Number(end.into());
+                }
+
+                activity["timestamps"] = timestamps;
+            }
 
             // TODO: Assets
 
