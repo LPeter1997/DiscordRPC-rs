@@ -102,7 +102,17 @@ impl Message {
                 activity["timestamps"] = timestamps;
             }
 
-            // TODO: Assets
+            if !rp.large_image_key.is_empty() || !rp.large_image_text.is_empty()
+            || !rp.small_image_key.is_empty() || !rp.small_image_text.is_empty() {
+                let mut assets = json::json!{{}};
+
+                write_opt_string(&mut assets, "large_image", rp.large_image_key);
+                write_opt_string(&mut assets, "large_text", rp.large_image_text);
+                write_opt_string(&mut assets, "small_image", rp.small_image_key);
+                write_opt_string(&mut assets, "small_text", rp.small_image_text);
+
+                activity["assets"] = assets;
+            }
 
             // TODO: Party
 
