@@ -184,6 +184,7 @@ impl IoProcess {
             }
 
             let message = message.unwrap();
+            println!("READING: {:?}", message);
             let _evt = message.value("evt");
             let nonce = message.value("nonce");
 
@@ -202,6 +203,7 @@ impl IoProcess {
         {
             let mut send_queue = send_queue.lock().unwrap();
             while let Some(msg) = send_queue.pop_front() {
+                println!("WRITING: {:?}", msg);
                 if !client.write(msg) {
                     // TODO: Retry?
                 }
