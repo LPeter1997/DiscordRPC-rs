@@ -1,5 +1,6 @@
 //! The RPC client based on a `Connection`.
 
+use std::fmt;
 use crate::{Connection, IpcConnection, Message, MessageType, Error};
 
 /// Represents the different states the `Client` can be in.
@@ -160,5 +161,15 @@ impl Client {
 impl Drop for Client {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+// TODO: Can we do better?
+impl fmt::Debug for Client {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Client")
+            .field("state", &self.state)
+            .field("app_id", &self.app_id)
+            .finish()
     }
 }

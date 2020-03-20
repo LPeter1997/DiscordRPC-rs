@@ -24,6 +24,7 @@ use client::*;
 // TODO: Store presence so at reconnect we can re-queue it?
 
 /// The Discord RPC client to communicate with the local Discord server.
+#[derive(Debug)]
 pub struct DiscordRPC {
     io_proc: IoProcess,
 }
@@ -80,6 +81,7 @@ pub struct RichPresence {
 }
 
 /// The IO thread manager that basically lets us run in a non-blocking way.
+#[derive(Debug)]
 struct IoProcess {
     client: Option<Client>,
     keep_running: Arc<AtomicBool>,
@@ -184,7 +186,6 @@ impl IoProcess {
             }
 
             let message = message.unwrap();
-            println!("READING: {:?}", message);
             let _evt = message.value("evt");
             let nonce = message.value("nonce");
 
@@ -203,7 +204,6 @@ impl IoProcess {
         {
             let mut send_queue = send_queue.lock().unwrap();
             while let Some(msg) = send_queue.pop_front() {
-                println!("WRITING: {:?}", msg);
                 if !client.write(msg) {
                     // TODO: Retry?
                 }
